@@ -6,7 +6,7 @@
 
 (defsystem "ptb2cf"
   :depends-on (:cl-ppcre)
-  :description "A tool for approximating PTB graph-structured representations by teres"
+  :description "A tool for approximating PTB graph-structured representations by trees"
   :version "0.1"
   :author "Yoshihide Kato"
   :components ((:file "util")
