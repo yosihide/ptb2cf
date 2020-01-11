@@ -72,7 +72,7 @@
   (and (find a (label-annotations (node-label node)) :test #'string=) t))
 
 (defun push-annotation! (a node)
-  (push a (label-annotations (node-label node))))
+  (pushnew a (label-annotations (node-label node))))
 
 (defun id (node)
   (label--index (node-label node)))

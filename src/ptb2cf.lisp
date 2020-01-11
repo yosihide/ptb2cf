@@ -14,6 +14,29 @@
 (in-package :ptb2cf)
 
 ;;; ptb->cf
+
+;; gapping construction
+;; grammatical role and adverbial tags
+(defparameter *role-tags*
+  '("DTV" "LGS" "PRD" "PUT" "SBJ" ; grammatical role ("TPC" and "VOC" are excluded.)
+    "BNF" "DIR" "EXT" "LOC" "MNR" "PRP" "TMP")) ; adverbial ("ADV" is excluded.)
+
+(defun role-tag (node)
+  (find-if #'(lambda (tag) (function? tag node)) *role-tags*))
+
+(defun annotate-gap! (tree)
+  (dolist (n (remove-if #'(lambda (x) (typep x 'terminal-node)) (preorder tree)))
+
+    ;; non-initial conjuncts in gapping construction
+    (when (find-if #'(lambda (x) (label-=index (node-label x))) (children n))
+      (push-annotation! "GAP" n))
+
+    ;; annotate role tag
+    (awhen (role-tag n)
+      (push-annotation! it n)))
+
+  tree)
+
 ;; annotate-nonlocal-dependency
 (defun filler-tag (cat type)
   (format nil "~a~a" cat type))
@@ -120,15 +143,17 @@
      (make-internal-node :label (node-label tree)
 			 :children (mapcar #'remove-recursive-unary-rule (children tree))))))
 
-;; remove-annotation (for CF-tree)
-(defun remove-annotation (tree)
+;; remove-function-tags-and-indexes (for CF-tree)
+(defun remove-function-tags-and-indexes (tree)
   (cond
     ((eq (type-of tree) 'terminal-node)
-     (make-terminal-node :label (make-label :category (cat tree))
+     (make-terminal-node :label (make-label :category (cat tree)
+					    :annotations (label-annotations (node-label tree)))
 			 :word (word tree)))
     (t
-     (make-internal-node :label (make-label :category (cat tree))
-			 :children (mapcar #'remove-annotation (children tree))))))
+     (make-internal-node :label (make-label :category (cat tree)
+					    :annotations (label-annotations (node-label tree)))
+			 :children (mapcar #'remove-function-tags-and-indexes (children tree))))))
 
 ;; dictionary
 (defstruct (dictionary (:constructor make-dict))
@@ -157,7 +182,11 @@
   (write-trees (map 'list #'string->tree (dictionary-index=>empty-element-string dict)) file))
 
 (defun dictionary-load (file)
-  (make-dictionary (read-trees file)))
+  (cond
+    ((null file)
+     (make-dictionary nil))
+    (t
+     (make-dictionary (read-trees file)))))
 
 (defun extract-empty-trees (tree)
   (cond
@@ -242,16 +271,20 @@
 	(error "The length of the terminals is longer than that of the sentence of the tree."))
       new)))
 
-(defun ptb->cf (&key ptb cf dictionary tag (nld? t))
-  (let ((hash (make-hash-table :test 'equal))
+(defun ptb->cf (&key ptb cf dictionary tag (nld? t) gap?)
+  (let ((trees (read-trees ptb))
+	(hash (make-hash-table :test 'equal))
 	(dict nil)
 	(result nil))
+
+    (when gap?
+      (setf trees (mapcar #'annotate-gap! trees)))
 
     (when (and nld? (probe-file dictionary))
       (format t "Dictionary file ~a is used." dictionary)
       (setf dict (dictionary-load dictionary)))
 
-    (dolist (tree (read-trees ptb))
+    (dolist (tree trees)
       (let ((x nil))
 	(cond
 	  (nld?
@@ -261,7 +294,7 @@
 		   (annotate-nonlocal-dependency tree)))))
 	  (t
 	   (setf x
-		 (remove-annotation
+		 (remove-function-tags-and-indexes
 		  (remove-recursive-unary-rule
 		   (remove-nodes-if #'(lambda (x) (cat= x "-NONE-")) tree))))))
 	(push x result)
@@ -321,6 +354,26 @@
 	      (nreverse result))))
        (make-internal-node :label (node-label tree)
 			   :children (recover-children (children tree)))))))
+
+;; recover gapping construction
+(defun role-equal (node1 node2)
+  (labels
+      ((role (node)
+	 (find-if #'(lambda (tag) (annotation? tag node)) *role-tags*))
+       (preposition (node)
+	 (awhen (find-if #'(lambda (n) (cat= n "IN")) (children node))
+	   (string-downcase (word it)))))
+    (let ((role1 (role node1))
+	  (role2 (role node2)))
+      (cond
+	((and (cat= node1 "PP") (cat= node2 "PP"))
+	 (equal (preposition node1) (preposition node2)))
+	((and role1 role2)
+	 (equal role1 role2))
+	((or role1 role2)
+	 nil)
+	(t
+	 (equal (cat node1) (cat node2)))))))
 
 ;; recover-nonlocal-dependency
 (defun recover-nonlocal-dependency (tree)
@@ -490,7 +543,84 @@
 		(rule-*ICH*-R n))))))
 
 	(when (find-if #'(lambda (x) (scan "\\*EXP\\*" x)) (annotations n))
-	  (rule-*EXP* n))))
+	  (rule-*EXP* n))
+
+	;; gapping construction
+	(when (annotation? "GAP" n)
+	  (awhen (find-if #'(lambda (x) (cat= x (cat n))) (reverse (left-siblings n))) ; first conjunct
+	    (let* ((correlates (remove-if #'(lambda (x) (typep x 'terminal-node)) (rest (preorder it))))
+		   (remnants (remove-if #'(lambda (x) (typep x 'terminal-node)) (children n)))
+		   (width-tab (make-hash-table :test 'eq))
+		   (table (make-array (list (1+ (length correlates)) (1+ (length remnants))) :initial-element nil)))
+	      (labels
+		  ((make-entry (pairs score-match score-cover)
+		     (list pairs score-match score-cover))
+		   (entry-pairs (entry)
+		     (nth 0 entry))
+		   (entry-score-match (entry)
+		     (nth 1 entry))
+		   (entry-score-cover (entry)
+		     (nth 2 entry))
+
+		   (max-entry (e1 e2)
+		     (cond
+		       ((null e1)
+			e2)
+		       ((null e2)
+			e1)
+		       ((> (entry-score-match e1) (entry-score-match e2))
+			e1)
+		       ((< (entry-score-match e1) (entry-score-match e2))
+			e2)
+		       ((>= (entry-score-cover e1) (entry-score-cover e2))
+			e1)
+		       (t
+			e2)))
+
+		   (skip-descendants (node)
+		     (acond
+		      ((gethash node next-tab)
+		       (cond
+			 ((typep it 'terminal-node)
+			  (skip-descendants it))
+			 (t
+			  it)))
+		      ((gethash node parent-tab)
+		       (skip-descendants it))
+		      (t
+		       nil)))
+
+		   (width (node)
+		     (awhen (gethash node width-tab)
+		       (return-from width it))
+		     (case (type-of node)
+		       (terminal-node
+			(setf (gethash node width-tab) 1))
+		       (internal-node
+			(setf (gethash node width-tab)
+			      (loop :for c :in (children node) :sum (width c))))))
+
+		   (match (c r)
+		     (awhen (aref table c r)
+		       (return-from match it))
+		     (cond
+		       ((or (= c (length correlates)) (= r (length remnants)))
+			(setf (aref table c r) (make-entry nil 0 0)))
+		       (t
+			(let ((skip (max-entry (match c (1+ r)) (match (1+ c) r)))
+			      (match nil))
+			  (when (role-equal (nth c correlates) (nth r remnants))
+			    (let* ((next (skip-descendants (nth c correlates)))
+				   (entry (match (or (position next correlates :test #'eq) (length correlates)) (1+ r))))
+			      (setf match (make-entry (cons (list (nth c correlates) (nth r remnants))
+							    (entry-pairs entry))
+						      (1+ (entry-score-match entry))
+						      (+ (entry-score-cover entry) (width (nth c correlates)))))))
+			  (setf (aref table c r) (max-entry match skip)))))))
+
+		(dolist (pair (entry-pairs (match 0 0)))
+		  (setf (label-=index (node-label (second pair))) (id (first pair)))
+		  (setf (gethash (id (first pair)) index-tab) t))))))))
 
     (dolist (n nodes)
       (setf (label-functions (node-label n)) nil)
