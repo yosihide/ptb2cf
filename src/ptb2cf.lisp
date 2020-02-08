@@ -376,7 +376,7 @@
 	 (equal (cat node1) (cat node2)))))))
 
 ;; recover-nonlocal-dependency
-(defun recover-nonlocal-dependency (tree)
+(defun recover-nonlocal-dependency (function-tags tree)
   (let ((parent-tab (make-hash-table :test 'eq))
 	(prev-tab (make-hash-table :test 'eq))
 	(next-tab (make-hash-table :test 'eq))
@@ -623,14 +623,19 @@
 		  (setf (gethash (id (first pair)) index-tab) t))))))))
 
     (dolist (n nodes)
-      (setf (label-functions (node-label n)) nil)
+      (let ((tags nil))
+	(dolist (f function-tags)
+	  (when (annotation? f n)
+	    (push f tags))
+	  (setf tags (nreverse tags)))
+	(setf (label-functions (node-label n)) tags))
       (setf (label-annotations (node-label n)) nil)
       (when (not (gethash (id n) index-tab))
 	(setf (id n) nil)))
     tree))
 
-(defun cf->ptb (&key cf ptb dictionary)
+(defun cf->ptb (&key cf ptb dictionary function-tags)
   (let ((dict (dictionary-load dictionary)))
-    (write-trees (mapcar #'(lambda (x) (recover-nonlocal-dependency (recover-empty-element x dict)))
+    (write-trees (mapcar #'(lambda (x) (recover-nonlocal-dependency function-tags (recover-empty-element x dict)))
 			 (read-trees cf))
 		 ptb)))
