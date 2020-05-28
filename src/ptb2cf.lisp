@@ -365,15 +365,9 @@
 	   (string-downcase (word it)))))
     (let ((role1 (role node1))
 	  (role2 (role node2)))
-      (cond
-	((and (cat= node1 "PP") (cat= node2 "PP"))
-	 (equal (preposition node1) (preposition node2)))
-	((and role1 role2)
-	 (equal role1 role2))
-	((or role1 role2)
-	 nil)
-	(t
-	 (equal (cat node1) (cat node2)))))))
+      (or (and role1 role2 (equal role1 role2))
+	  (and (cat= node1 "PP") (cat= node2 "PP") (equal (preposition node1) (preposition node2)))
+	  (and (null role1) (null role2) (equal (cat node1) (cat node2)))))))
 
 ;; recover-nonlocal-dependency
 (defun recover-nonlocal-dependency (function-tags tree)
