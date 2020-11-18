@@ -218,10 +218,11 @@
 		  (list (make-internal-node :label (make-label :category (cat tree)
 							       :annotations (list (format nil "RE~a" it)))
 					    :children children))))
+	   ;; skip the empty element if it does not exist in the dictionary
+	   ((node-empty? (nth r (children tree)))
+	    (write-tree (nth r (children tree)) t)
+	    (format t " does not exist in the dictionary.~%"))
 	   (t
-	    (when (node-empty? (nth r (children tree)))
-	      (write-tree (nth r (children tree)) t)
-	      (format t " does not exist in the dictionary.~%"))
 	    (setf children (append1 children (annotate-empty-element (nth r (children tree)) dict))))))
 
        (loop
@@ -234,11 +235,11 @@
 		  (list (make-internal-node :label (make-label :category (cat tree)
 							       :annotations (list (format nil "LE~a" it)))
 					    :children children))))
+	   ;; skip the empty element if it does not exist in the dictionary
+	   ((node-empty? (nth l (children tree)))
+	    (write-tree (nth l (children tree)) t)
+	    (format t " does not exist in the dictionary.~%"))
 	   (t
-	    (when (node-empty? (nth l (children tree)))
-	      (write-tree (nth l (children tree)) t)
-	      (format t " does not exist in the dictionary.~%"))
-
 	    (setf children (cons (annotate-empty-element (nth l (children tree)) dict) children)))))
 
        (make-internal-node :label (node-label tree)
